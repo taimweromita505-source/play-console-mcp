@@ -20,7 +20,7 @@ export const tools = {
   reply_review: { scope: 'play:write', description: 'Post a public developer reply to a review.', schema: z.object({ packageName: pkg, reviewId: segment, replyText: z.string().min(1).max(350) }),
     run: (p, a) => p.call(a.packageName, `/reviews/${a.reviewId}:reply`, 'POST', { replyText: a.replyText }) },
   create_edit: { scope: 'play:write', description: 'Create an unpublished edit for listing changes or releases.', schema: z.object({ packageName: pkg }),
-    run: async (p, a) => { const result = await p.call(a.packageName, '/edits', 'POST', {}); p.store.rememberEdit(p.tenant, a.packageName, result.id); return result; } },
+    run: async (p, a) => { const result = await p.call(a.packageName, '/edits', 'POST', {}); await p.store.rememberEdit(p.tenant, a.packageName, result.id); return result; } },
   get_tracks: { scope: 'play:read', description: 'Read tracks inside an edit created by this connection.', schema: z.object(editArgs),
     edit: true, run: (p, a) => p.call(a.packageName, `/edits/${a.editId}/tracks`) },
   get_listings: { scope: 'play:read', description: 'Read store listings inside an edit created by this connection.', schema: z.object(editArgs),
@@ -32,9 +32,9 @@ export const tools = {
   validate_edit: { scope: 'play:write', description: 'Ask Google to validate an unpublished edit.', schema: z.object(editArgs),
     edit: true, run: (p, a) => p.call(a.packageName, `/edits/${a.editId}:validate`, 'POST') },
   commit_edit: { scope: 'play:publish', description: 'Commit staged listing and release changes to Google Play. May publish or submit for review. Requires operator enablement and a privileged token.', schema: z.object(editArgs),
-    edit: true, run: async (p, a) => { await p.call(a.packageName, `/edits/${a.editId}:validate`, 'POST'); const result = await p.call(a.packageName, `/edits/${a.editId}:commit`, 'POST', undefined, { changesInReviewBehavior: 'ERROR_IF_IN_REVIEW' }); p.store.forgetEdit(p.tenant, a.packageName, a.editId); return result; } },
+    edit: true, run: async (p, a) => { await p.call(a.packageName, `/edits/${a.editId}:validate`, 'POST'); const result = await p.call(a.packageName, `/edits/${a.editId}:commit`, 'POST', undefined, { changesInReviewBehavior: 'ERROR_IF_IN_REVIEW' }); await p.store.forgetEdit(p.tenant, a.packageName, a.editId); return result; } },
   discard_edit: { scope: 'play:write', description: 'Discard an unpublished edit.', schema: z.object(editArgs),
-    edit: true, run: async (p, a) => { await p.call(a.packageName, `/edits/${a.editId}`, 'DELETE'); p.store.forgetEdit(p.tenant, a.packageName, a.editId); return { discarded: true }; } }
+    edit: true, run: async (p, a) => { await p.call(a.packageName, `/edits/${a.editId}`, 'DELETE'); await p.store.forgetEdit(p.tenant, a.packageName, a.editId); return { discarded: true }; } }
 };
 
 export async function execute(name, input, principal, play, enablePublish = false) {
@@ -43,13 +43,13 @@ export async function execute(name, input, principal, play, enablePublish = fals
   if (!principal.scopes.has(tool.scope)) throw new Error(`Missing scope: ${tool.scope}`);
   if (tool.scope === 'play:publish' && !enablePublish) throw new Error('Publishing is disabled by the operator');
   const args = tool.schema.parse(input);
-  if (tool.edit) play.store.requireEdit(play.tenant, args.packageName, args.editId);
+  if (tool.edit) await play.store.requireEdit(play.tenant, args.packageName, args.editId);
   try {
     const result = await tool.run(play, args);
-    play.store.audit(play.tenant, name, args.packageName, 'success');
+    await play.store.audit(play.tenant, name, args.packageName, 'success');
     return result;
   } catch (error) {
-    play.store.audit(play.tenant, name, args.packageName, 'failure');
+    await play.store.audit(play.tenant, name, args.packageName, 'failure');
     throw error;
   }
 }

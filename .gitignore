@@ -2,3 +2,7 @@ node_modules/
 .env
 data/
 *.sqlite*
+.dev.vars*
+.wrangler/
+dist/
+worker-configuration.d.ts

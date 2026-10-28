@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "play-console-mcp",
+  "main": "src/cloudflare/worker.ts",
+  "account_id": "0609aceb5bb38bd3f97d3f9c87f1a433",
+  "compatibility_date": "2026-10-28",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "triggers": { "crons": ["17 3 * * *"] },
+  "vars": {
+    "PUBLIC_URL": "https://play-console-mcp.taimweromita505.workers.dev",
+    "ENABLE_PUBLISH": "false"
+  },
+  "d1_databases": [{ "binding": "DB", "database_name": "play-console-mcp-db", "database_id": "ac8e6e0f-2258-489d-a8eb-a8330bdc3e00", "migrations_dir": "migrations" }],
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "32a63cf7e294434ea4644ed3107da3ec" }],
+  "ratelimits": [{ "name": "REQUEST_LIMITER", "namespace_id": "21801", "simple": { "limit": 60, "period": 60 } }],
+  "observability": { "enabled": true, "head_sampling_rate": 1, "redact_query_string": true },
+  "secrets": { "required": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "TOKEN_ENCRYPTION_KEY"] }
+}

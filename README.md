@@ -1,5 +1,30 @@
 # Google Play Console connector for agents
 
+## Cloudflare deployment (0.2)
+
+The Cloudflare entry point is `src/cloudflare/worker.ts`, configured by `wrangler.jsonc`. It uses D1 for encrypted Google credentials, edits and audit records; a dedicated KV namespace for OAuth; and Cloudflare rate-limit bindings. The previous standalone Node entry point remains available.
+
+The Worker includes client registration, OAuth discovery, PKCE, a per-agent consent page, Google OpenID Connect identity verification, Google token refresh, and account disconnect. It uses Cloudflare's official OAuth Provider library. An account is identified by Google's verified `sub` claim. Disconnect removes Google credentials and edit ownership; the revision check prevents older grants from being revived by reconnecting later.
+
+Build and test with `npm run cf:types`, `npm run typecheck`, `npm run cf:build`, and `npm test`. Integration tests run in workerd via Miniflare with simulated Google responses. They exercise registration, consent, Google identity verification, token exchange, MCP discovery and tool listing, review reads, encrypted storage, and disconnect. These are not live Google account tests.
+
+For your own Cloudflare account, replace the account and resource IDs in `wrangler.jsonc`, create D1 and OAuth KV, apply `migrations/0001_connector.sql`, and configure these secrets through Cloudflare's dashboard or interactive Wrangler secret prompts: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `TOKEN_ENCRYPTION_KEY` (32 random bytes encoded as base64). Do not rotate the encryption key without migrating encrypted records. The OAuth client redirect must exactly match `PUBLIC_URL/google/callback`.
+
+Hosted endpoints:
+
+- `/mcp` — Streamable HTTP MCP.
+- `/mcp/api/tools/NAME` — authenticated REST tool calls.
+- `/mcp/api/bundles/PACKAGE/EDIT` — authenticated streaming AAB upload, with Content-Length and a maximum of 90 MiB.
+- `DELETE /mcp/api/connection` — disconnect the Google account, requires `play:manage`.
+- `/oauth/register`, `/authorize`, `/oauth/token` — agent authorization.
+- `/health` — setup status; `/privacy` — beta data-handling notice.
+
+Both MCP and hosted REST tokens are bound to the canonical `/mcp` resource. Supported scopes are `play:read`, `play:write`, `play:manage`, and `offline_access`. An agent must request write scope to stage changes or reply publicly. Publishing is deliberately unavailable in this Cloudflare beta. The daily scheduled handler deletes audit records older than 30 days.
+
+Deployment without Google credentials serves the homepage, metadata and setup status, but authorization fails closed with a setup-pending page. Adding real Google credentials and completing Google's applicable public OAuth requirements are separate steps. Large/resumable uploads, per-action approvals, live Google Play validation, and additional client compatibility testing remain required before a general public launch.
+
+## Standalone Node starter (0.1)
+
 An initial multi-user connector with remote MCP and REST interfaces to the Google Play Developer API. Node.js 24+, JavaScript, Express, the official MCP TypeScript SDK, and Google's OAuth client library.
 
 **Status: development starter, not a launched service.** Local automated tests use mocks; no live Play account or release has been tested. Configure the identity provider and Google OAuth project, finish the launch items below, and test against an internal testing app before inviting users.
