@@ -1,0 +1,16 @@
+{
+  "name": "play-console-agent-connector",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": { "start": "node --env-file=.env src/server.js", "test": "node --test" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.0.0",
+    "google-auth-library": "^10.0.0",
+    "jose": "^6.0.0",
+    "zod": "^4.6.7"
+  }
+}
