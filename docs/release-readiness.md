@@ -1,6 +1,6 @@
 # Release readiness
 
-This is a development review of the 0.2 Cloudflare beta, not an independent security audit. The service is deployed and configuration is present. Real Google authentication and Play Console requests remain unverified.
+This is a development review of the 0.2 Cloudflare beta, not an independent security audit. The service is deployed. A real read-only Google authentication and Play Console run has now passed; public rollout and write/upload validation remain incomplete.
 
 ## Verified by automated tests
 
@@ -25,7 +25,7 @@ The first real browser run found two issues that mocked HTTP requests did not ex
 - `Referrer-Policy: no-referrer` caused real HTML POST forms to send `Origin: null`, so the origin check rejected the consent form. The GET consent page now uses `same-origin`; callbacks and other pages retain `no-referrer`.
 - Chromium's form-action policy applies to form redirect chains. The consent page now permits only itself, Google's authorization origin, and the validated client's return origin. Other pages retain their restrictive default policy.
 
-The repaired browser flow reached Google's account chooser. Google then returned `403 access_denied` because the development account had not been added as an approved OAuth test user. Real Google token exchange and Play Console calls remain pending until that account configuration is corrected and consent is completed.
+The repaired browser flow reached Google's account chooser. Google initially returned `403 access_denied` because the development account was not an approved OAuth test user. After adding the test user and completing consent, the live test passed Google token exchange, official MCP SDK initialization, read-only tool discovery, a successful review request returning zero reviews, read-only write denial, inaccessible-app rejection, agent refresh, and revocation of the test grant. The revoked access token was rejected with HTTP 401. Pagination could not be exercised because the review response had no next page.
 
 Live read-only operational checks confirmed the D1 connection and expected tables, required secret binding names, rate-limit bindings, log query-string redaction, and the daily cleanup schedule. This does not establish backup recovery, alerting, or a complete operational audit.
 
@@ -33,8 +33,8 @@ Live read-only operational checks confirmed the D1 connection and expected table
 
 ## Required before inviting public users
 
-- [ ] Complete real Google sign-in with the deployed redirect URI and a permitted test user.
-- [ ] Confirm Google Play Android Developer API is enabled and a known package is accessible.
+- [x] Complete real Google sign-in with the deployed redirect URI and a permitted test user.
+- [x] Confirm Google Play Android Developer API is enabled and a known package is accessible.
 - [ ] Read real reviews, including pagination and permission-denied behavior.
 - [ ] Verify Google access-token refresh, agent refresh, revoked Google grants, and expired agent grants. The current automated flow does not exercise every refresh/error path.
 - [ ] Test actual MCP clients, including requested scopes, client registration, browser consent, token refresh, and reconnect behavior.

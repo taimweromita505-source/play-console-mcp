@@ -2,7 +2,13 @@
 
 Connect MCP-compatible agents to Google Play Console through a hosted Cloudflare Worker. The service provides Google sign-in, per-agent consent, scoped access, review tools, store listing edits, streaming build uploads, and release preparation.
 
-**Status: deployed developer beta. Google credentials are configured, but real Google sign-in and live Play Console operations have not yet been validated. Publishing is disabled.** Passing automated tests is not a production-readiness or security certification.
+**Status: deployed developer beta. Real Google sign-in, MCP initialization, a live review read, agent token refresh, read-only restrictions, and test-grant revocation have passed. Publishing is disabled.** Write operations, uploads, additional agent products, and general public access have not yet been validated. Passing tests is not a production-readiness or security certification.
+
+## Public access and beta enrollment
+
+The Google OAuth app is currently in **Testing** mode. Only accounts approved in its Google Auth Platform test-user list can connect. Submitting an email address or receiving a Gmail confirmation does not grant Google access.
+
+For fully automatic access without manually enrolling each tester, complete the Google OAuth production configuration and applicable verification. Google approval is an external prerequisite; this repository does not bypass it or use an undocumented tester-enrollment API. See [public access prerequisites](docs/public-access.md).
 
 ## Hosted service
 
@@ -24,7 +30,7 @@ Connect MCP-compatible agents to Google Play Console through a hosted Cloudflare
 
 If Google's OAuth app is in testing mode, the account must be included in its test-user list. The Google Play Android Developer API must be enabled in the operator's Cloud project. Each developer uses the operator's OAuth app; they do not create their own Google Cloud project for this service.
 
-This service does not discover every app in an account. Users supply package names. Compatibility has not yet been tested against individual agent products. Agents need an HTTP/file-upload capability in addition to MCP to send build bytes.
+This service does not discover every app in an account. Users supply package names. The official MCP SDK client has passed a live read-only connection test; other agent products have not yet been validated. Agents need an HTTP/file-upload capability in addition to MCP to send build bytes.
 
 ## Permissions and tools
 
@@ -117,7 +123,7 @@ Keep the encryption key stable. Changing it without migrating existing records m
 
 ## Remaining launch work
 
-See [release readiness](docs/release-readiness.md) for the specific validation and operational gaps. A real sign-in test, Google Play read and write tests, token-refresh and revocation tests, actual client compatibility, applicable Google verification, and an operator security review are still outstanding. Automated CI is not configured yet. No general public launch is claimed.
+See [release readiness](docs/release-readiness.md) for the specific validation and operational gaps. Real sign-in, one live review read, agent refresh, and test-grant revocation have passed. Live write/upload tests, remaining refresh/error paths, additional client compatibility, applicable Google verification, and an operator security review are still outstanding. Automated CI is not configured yet. No general public launch is claimed.
 
 The older Express/SQLite implementation uses different endpoints, authentication requirements, and a 150 MiB buffered upload limit. Its instructions are isolated in [the standalone Node guide](docs/standalone-node.md); they do not describe the hosted Cloudflare service.
 
