@@ -34,16 +34,26 @@ test('Workers runtime completes Google-backed agent OAuth and enforces tenant di
   const { publicKey, privateKey } = await generateKeyPair('RS256');
   const jwk = { ...await exportJWK(publicKey), kid: 'test-key', use: 'sig', alg: 'RS256' };
   let nonce = '';
+  let googleRefreshCalls = 0;
   const mf = new Miniflare(convertV4MiniflareOptions({ ...config,
     bindings: { PUBLIC_URL: base, ENABLE_PUBLISH: 'false', GOOGLE_CLIENT_ID: 'test-client', GOOGLE_CLIENT_SECRET: 'test-secret', TOKEN_ENCRYPTION_KEY: randomBytes(32).toString('base64') },
     outboundService: async request => {
       const url = new URL(request.url);
       if (url.href === 'https://oauth2.googleapis.com/token') {
+        const grant = new URLSearchParams(await request.text());
+        if (grant.get('grant_type') === 'refresh_token') {
+          googleRefreshCalls++;
+          assert.equal(grant.get('refresh_token'), 'mock-google-refresh');
+          return Response.json({ access_token: 'mock-refreshed-google-access', expires_in: 3600, scope: `openid email ${playScope}` });
+        }
         const idToken = await new SignJWT({ nonce, email: 'test@example.test' }).setProtectedHeader({ alg: 'RS256', kid: 'test-key' }).setIssuer('https://accounts.google.com').setAudience('test-client').setSubject('google-user-one').setIssuedAt().setExpirationTime('5m').sign(privateKey);
-        return Response.json({ access_token: 'mock-google-access', refresh_token: 'mock-google-refresh', expires_in: 3600, scope: `openid email ${playScope}`, id_token: idToken });
+        return Response.json({ access_token: 'mock-google-access', refresh_token: 'mock-google-refresh', expires_in: 1, scope: `openid email ${playScope}`, id_token: idToken });
       }
       if (url.href === 'https://www.googleapis.com/oauth2/v3/certs') return Response.json({ keys: [jwk] });
-      if (url.pathname.endsWith('/reviews')) return Response.json({ reviews: [{ reviewId: 'mock-review', authorName: 'Example' }] });
+      if (url.pathname.endsWith('/reviews')) {
+        assert.equal(request.headers.get('Authorization'), 'Bearer mock-refreshed-google-access');
+        return Response.json({ reviews: [{ reviewId: 'mock-review', authorName: 'Example' }] });
+      }
       if (url.href === 'https://oauth2.googleapis.com/revoke') return new Response('', { status: 200 });
       return new Response('Unexpected mock request', { status: 502 });
     }
@@ -59,12 +69,20 @@ test('Workers runtime completes Google-backed agent OAuth and enforces tenant di
     for (const [key, value] of Object.entries({ client_id: client.client_id, redirect_uri: 'http://127.0.0.1:3210/callback', response_type: 'code', scope: 'play:read play:write play:manage offline_access', state: 'agent-state', code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', resource: `${base}/mcp` })) authorize.searchParams.set(key, value);
     const consent = await mf.dispatchFetch(authorize.href);
     assert.equal(consent.status, 200);
+    assert.equal(consent.headers.get('referrer-policy'), 'same-origin');
+    assert.match(consent.headers.get('content-security-policy'), /form-action 'self' https:\/\/accounts\.google\.com http:\/\/127\.0\.0\.1:3210;/);
     const page = await consent.text();
     assert.match(page, /Integration test agent/);
     const handle = /name="handle" value="([^"]+)"/.exec(page)[1];
     const cookie = response => response.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
     const form = new URLSearchParams({ handle, decision: 'approve' });
     for (const scope of ['play:read', 'play:write', 'play:manage', 'offline_access']) form.append('scope', scope);
+    for (const origin of ['null', 'https://untrusted.example']) {
+      const rejected = await mf.dispatchFetch(`${base}/authorize`, { method: 'POST', headers: { Cookie: cookie(consent), Origin: origin, 'Content-Type': 'application/x-www-form-urlencoded' }, body: form.toString() });
+      assert.equal(rejected.status, 403);
+    }
+    const unbound = await mf.dispatchFetch(`${base}/authorize`, { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/x-www-form-urlencoded' }, body: form.toString() });
+    assert.equal(unbound.status, 400);
     const approved = await mf.dispatchFetch(`${base}/authorize`, { method: 'POST', redirect: 'manual', headers: { Cookie: cookie(consent), Origin: base, 'Content-Type': 'application/x-www-form-urlencoded' }, body: form.toString() });
     assert.equal(approved.status, 302);
     const google = new URL(approved.headers.get('location'));
@@ -89,6 +107,15 @@ test('Workers runtime completes Google-backed agent OAuth and enforces tenant di
     const reviews = await mf.dispatchFetch(`${base}/mcp/api/tools/list_reviews`, { method: 'POST', headers, body: JSON.stringify({ packageName: 'com.example.app' }) });
     assert.equal(reviews.status, 200, await reviews.clone().text());
     assert.equal((await reviews.json()).reviews[0].reviewId, 'mock-review');
+    assert.equal(googleRefreshCalls, 1);
+    const refreshed = await mf.dispatchFetch(`${base}/oauth/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: credentials.refresh_token, client_id: client.client_id, scope: 'play:read play:manage', resource: `${base}/mcp` }).toString() });
+    assert.equal(refreshed.status, 200, await refreshed.clone().text());
+    const narrowed = await refreshed.json();
+    assert.ok(narrowed.access_token && narrowed.access_token !== credentials.access_token);
+    headers.Authorization = `Bearer ${narrowed.access_token}`;
+    const deniedWrite = await mf.dispatchFetch(`${base}/mcp/api/tools/reply_review`, { method: 'POST', headers, body: '{}' });
+    assert.equal(deniedWrite.status, 400);
+    assert.match((await deniedWrite.json()).error, /Missing scope: play:write/);
     const stored = await db.prepare('SELECT secret FROM credentials').first();
     assert.ok(!stored.secret.includes('mock-google-refresh'));
     const disconnected = await mf.dispatchFetch(`${base}/mcp/api/connection`, { method: 'DELETE', headers });

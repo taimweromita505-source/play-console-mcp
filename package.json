@@ -14,7 +14,7 @@
     "cf:build": "wrangler deploy --dry-run --outdir dist --minify",
     "cf:deploy": "wrangler deploy --minify",
     "typecheck": "tsc --noEmit",
-    "test:cloudflare": "npm run cf:types && npm run typecheck && npm run cf:build && node --test test/cloudflare.test.js",
+    "test:cloudflare": "npm run cf:types && npm run typecheck && npm run cf:build && node --test test/cloudflare.test.js test/cloudflare-identity.test.js",
     "check": "npm test && npm run test:cloudflare"
   },
   "dependencies": {

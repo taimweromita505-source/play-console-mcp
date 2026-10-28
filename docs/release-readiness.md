@@ -13,6 +13,23 @@ This is a development review of the 0.2 Cloudflare beta, not an independent secu
 - Cloudflare setup pages fail closed when Google configuration is missing.
 - OAuth discovery and unauthenticated MCP challenges work in the Workers runtime.
 - A simulated Google-backed agent flow exercises registration, consent, PKCE, identity-token verification, encrypted storage, tool listing, a review read, and disconnect.
+- Simulated expiring Google access tokens are refreshed before Play API requests.
+- Agent refresh tokens can be exchanged for narrower read/manage scope; write attempts with that token are rejected.
+- Consent submissions with a null/foreign origin or a missing browser-binding cookie are rejected.
+- Invalid Google nonce, audience, issuer, expiry, and missing Play scope are rejected before credentials are stored.
+
+## Live validation findings
+
+The first real browser run found two issues that mocked HTTP requests did not expose. Both are fixed in the deployed Worker with regression assertions:
+
+- `Referrer-Policy: no-referrer` caused real HTML POST forms to send `Origin: null`, so the origin check rejected the consent form. The GET consent page now uses `same-origin`; callbacks and other pages retain `no-referrer`.
+- Chromium's form-action policy applies to form redirect chains. The consent page now permits only itself, Google's authorization origin, and the validated client's return origin. Other pages retain their restrictive default policy.
+
+The repaired browser flow reached Google's account chooser. Google then returned `403 access_denied` because the development account had not been added as an approved OAuth test user. Real Google token exchange and Play Console calls remain pending until that account configuration is corrected and consent is completed.
+
+Live read-only operational checks confirmed the D1 connection and expected tables, required secret binding names, rate-limit bindings, log query-string redaction, and the daily cleanup schedule. This does not establish backup recovery, alerting, or a complete operational audit.
+
+`scripts/live-readiness.mjs PACKAGE_NAME [REPORT_FILE]` provides a temporary loopback OAuth client for the live read-only test. It keeps tokens in memory, validates callback state and issuer, uses the official MCP SDK, attempts agent refresh, and attempts to revoke its own test grant when checks finish. It writes a result summary to the ignored `work/live-readiness-result.json` by default. An optional output path is accepted. It does not post replies, upload builds, or publish releases.
 
 ## Required before inviting public users
 
@@ -23,7 +40,7 @@ This is a development review of the 0.2 Cloudflare beta, not an independent secu
 - [ ] Test actual MCP clients, including requested scopes, client registration, browser consent, token refresh, and reconnect behavior.
 - [ ] Test a signed AAB on an internal testing app, upload interruptions, accurate Content-Length, and the 90 MiB limit.
 - [ ] Test store listing edits, release track replacement, expired edits, validation errors, and discard behavior.
-- [ ] Test negative authorization cases beyond the current suite: cross-browser consent replay, wrong nonce/audience, refresh reuse, and read-only tokens attempting writes.
+- [ ] Test remaining authorization lifecycle cases: cross-browser upstream callback replay and refresh-token reuse. Invalid identity claims and read-only write denial are now covered by automated tests.
 - [ ] Confirm Google's applicable consent branding, privacy, domain, production-audience, and scope-verification requirements. Configuration presence is not verification approval.
 - [ ] Review privacy/support contact details, retention, backups, account deletion, and a private security-reporting channel.
 - [ ] Rotate credentials shared during setup and replace the deployed secret values. Do not rotate the database encryption key casually.

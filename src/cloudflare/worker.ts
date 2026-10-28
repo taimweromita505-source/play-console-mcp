@@ -35,6 +35,10 @@ async function authorize(request: Request, env: AppEnv) {
     if (authRequest.codeChallengeMethod !== 'S256' || !authRequest.codeChallenge) return html(layout('Cannot connect', '<h1>PKCE is required.</h1><p>Use an MCP client that supports authorization with S256 PKCE.</p>'), {}, 400);
     const details = await oauth.describeConsent(authRequest);
     const consent = await oauth.beginConsent(authRequest);
+    // Chromium applies form-action to the POST's redirect chain as well as its
+    // first destination. Allow only Google and this validated client's origin.
+    const clientOrigin = new URL(authRequest.redirectUri).origin;
+    consent.headers.set('Content-Security-Policy', `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://accounts.google.com ${clientOrigin}; frame-ancestors 'none'; base-uri 'none'`);
     const scopeList = details.scope.map(scope => `<label><input type="checkbox" name="scope" value="${escape(scope)}" checked> <strong>${escape(scope)}</strong><br>${escape(descriptions[scope] ?? scope)}</label>`).join('');
     return html(layout('Authorize your agent', `<span class="tag">Permission request</span><h1>Connect ${escape(details.clientName)}?</h1><p>${details.clientDomain ? `Client domain: <strong>${escape(details.clientDomain)}</strong>.` : 'This client registered itself. Its displayed name is not verified.'} Authorization returns to <strong>${escape(details.redirectHost)}</strong>.</p>${details.redirectIsLoopback ? '<p class="notice">This connects to an app on your computer. Continue only if you started this connection.</p>' : ''}<p>Choose the permissions to grant. You will then sign in with Google and approve Google Play access.</p><form method="post" action="/authorize"><input type="hidden" name="handle" value="${escape(consent.handle)}"><section>${scopeList}</section><p>Publishing is disabled during this beta.</p><button name="decision" value="approve">Continue with Google</button> <button class="secondary" name="decision" value="deny">Cancel</button></form>`), consent.headers);
   }
@@ -203,10 +207,12 @@ export default {
     }
     const result = new Response(response.body, response);
     result.headers.set('Cache-Control', 'no-store');
-    result.headers.set('Referrer-Policy', 'no-referrer');
+    // HTML POST navigation under no-referrer sends Origin: null. Keep the
+    // consent form's real same-origin header without leaking referrers to Google.
+    result.headers.set('Referrer-Policy', path === '/authorize' && request.method === 'GET' ? 'same-origin' : 'no-referrer');
     result.headers.set('X-Content-Type-Options', 'nosniff');
     result.headers.set('X-Frame-Options', 'DENY');
-    if (result.headers.get('Content-Type')?.includes('text/html')) result.headers.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+    if (result.headers.get('Content-Type')?.includes('text/html') && !result.headers.has('Content-Security-Policy')) result.headers.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
     return result;
   },
   async scheduled(_event: ScheduledController, env: Env) {
