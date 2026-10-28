@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { randomBytes, createHash } from 'node:crypto';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { generateKeyPair, exportJWK, SignJWT } from 'jose';
@@ -14,7 +14,7 @@ const config = {
   ratelimits: { REQUEST_LIMITER: { namespace_id: '21801', simple: { limit: 60, period: 60 } } }
 };
 
-test('Workers runtime serves setup status and protects the MCP endpoint', { skip: !existsSync('dist/worker.js') }, async () => {
+test('Workers runtime serves setup status and protects the MCP endpoint', async () => {
   const mf = new Miniflare(convertV4MiniflareOptions({ ...config, bindings: { PUBLIC_URL: base, ENABLE_PUBLISH: 'false' } }));
   try {
     const health = await mf.dispatchFetch(`${base}/health`);
@@ -30,7 +30,7 @@ test('Workers runtime serves setup status and protects the MCP endpoint', { skip
   } finally { await mf.dispose(); }
 });
 
-test('Workers runtime completes Google-backed agent OAuth and enforces tenant disconnect', { skip: !existsSync('dist/worker.js') }, async () => {
+test('Workers runtime completes Google-backed agent OAuth and enforces tenant disconnect', async () => {
   const { publicKey, privateKey } = await generateKeyPair('RS256');
   const jwk = { ...await exportJWK(publicKey), kid: 'test-key', use: 'sig', alg: 'RS256' };
   let nonce = '';

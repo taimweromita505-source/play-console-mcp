@@ -1,114 +1,128 @@
-# Google Play Console connector for agents
+# Google Play Console MCP
 
-## Cloudflare deployment (0.2)
+Connect MCP-compatible agents to Google Play Console through a hosted Cloudflare Worker. The service provides Google sign-in, per-agent consent, scoped access, review tools, store listing edits, streaming build uploads, and release preparation.
 
-The Cloudflare entry point is `src/cloudflare/worker.ts`, configured by `wrangler.jsonc`. It uses D1 for encrypted Google credentials, edits and audit records; a dedicated KV namespace for OAuth; and Cloudflare rate-limit bindings. The previous standalone Node entry point remains available.
+**Status: deployed developer beta. Google credentials are configured, but real Google sign-in and live Play Console operations have not yet been validated. Publishing is disabled.** Passing automated tests is not a production-readiness or security certification.
 
-The Worker includes client registration, OAuth discovery, PKCE, a per-agent consent page, Google OpenID Connect identity verification, Google token refresh, and account disconnect. It uses Cloudflare's official OAuth Provider library. An account is identified by Google's verified `sub` claim. Disconnect removes Google credentials and edit ownership; the revision check prevents older grants from being revived by reconnecting later.
+## Hosted service
 
-Build and test with `npm run cf:types`, `npm run typecheck`, `npm run cf:build`, and `npm test`. Integration tests run in workerd via Miniflare with simulated Google responses. They exercise registration, consent, Google identity verification, token exchange, MCP discovery and tool listing, review reads, encrypted storage, and disconnect. These are not live Google account tests.
+| Address | Purpose |
+| --- | --- |
+| [Service homepage](https://play-console-mcp.taimweromita505.workers.dev/) | Connection instructions and beta status |
+| `https://play-console-mcp.taimweromita505.workers.dev/mcp` | Remote MCP endpoint to add to an agent |
+| [Health status](https://play-console-mcp.taimweromita505.workers.dev/health) | Configuration presence and live-validation status |
+| [Data and privacy](https://play-console-mcp.taimweromita505.workers.dev/privacy) | Beta data-handling notice |
 
-For your own Cloudflare account, replace the account and resource IDs in `wrangler.jsonc`, create D1 and OAuth KV, apply `migrations/0001_connector.sql`, and configure these secrets through Cloudflare's dashboard or interactive Wrangler secret prompts: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `TOKEN_ENCRYPTION_KEY` (32 random bytes encoded as base64). Do not rotate the encryption key without migrating encrypted records. The OAuth client redirect must exactly match `PUBLIC_URL/google/callback`.
+`googleConfigured: true` means the required configuration is present. It does not prove that Google accepts the credentials, that the consent configuration is correct, or that the account has app permissions.
 
-Hosted endpoints:
+## Connect an agent
 
-- `/mcp` — Streamable HTTP MCP.
-- `/mcp/api/tools/NAME` — authenticated REST tool calls.
-- `/mcp/api/bundles/PACKAGE/EDIT` — authenticated streaming AAB upload, with Content-Length and a maximum of 90 MiB.
-- `DELETE /mcp/api/connection` — disconnect the Google account, requires `play:manage`.
-- `/oauth/register`, `/authorize`, `/oauth/token` — agent authorization.
-- `/health` — setup status; `/privacy` — beta data-handling notice.
+1. Add the remote MCP endpoint above in a client supporting Streamable HTTP, OAuth authorization codes with S256 PKCE, and either dynamic client registration or Client ID Metadata Documents.
+2. Request `play:read` for the first test. Add other scopes only when needed.
+3. Review the client name, redirect destination, and permissions on the consent page. Continue with Google using an account with access to your app in Play Console.
+4. Ask the agent to list reviews for a known package name, such as `com.example.app`.
 
-Both MCP and hosted REST tokens are bound to the canonical `/mcp` resource. Supported scopes are `play:read`, `play:write`, `play:manage`, and `offline_access`. An agent must request write scope to stage changes or reply publicly. Publishing is deliberately unavailable in this Cloudflare beta. The daily scheduled handler deletes audit records older than 30 days.
+If Google's OAuth app is in testing mode, the account must be included in its test-user list. The Google Play Android Developer API must be enabled in the operator's Cloud project. Each developer uses the operator's OAuth app; they do not create their own Google Cloud project for this service.
 
-Deployment without Google credentials serves the homepage, metadata and setup status, but authorization fails closed with a setup-pending page. Adding real Google credentials and completing Google's applicable public OAuth requirements are separate steps. Large/resumable uploads, per-action approvals, live Google Play validation, and additional client compatibility testing remain required before a general public launch.
+This service does not discover every app in an account. Users supply package names. Compatibility has not yet been tested against individual agent products. Agents need an HTTP/file-upload capability in addition to MCP to send build bytes.
 
-## Standalone Node starter (0.1)
+## Permissions and tools
 
-An initial multi-user connector with remote MCP and REST interfaces to the Google Play Developer API. Node.js 24+, JavaScript, Express, the official MCP TypeScript SDK, and Google's OAuth client library.
-
-**Status: development starter, not a launched service.** Local automated tests use mocks; no live Play account or release has been tested. Configure the identity provider and Google OAuth project, finish the launch items below, and test against an internal testing app before inviting users.
-
-## Supported operations
-
-| Operation | Access scope | Effect |
+| Scope | Capabilities | Effect |
 | --- | --- | --- |
-| Read reviews | `play:read` | Reads reviews for a known package |
-| Reply to a review | `play:write` | Immediately posts a public reply |
-| Create an edit | `play:write` | Opens an unpublished Google Play edit |
-| Read listings and tracks | `play:read` | Reads within an edit created by this connection |
-| Update text listing | `play:write` | Stages title and descriptions |
-| Upload AAB | `play:write` | Binary REST upload to an owned edit, up to 150 MiB |
-| Update track | `play:write` | Stages the complete release list for that track |
-| Validate / discard edit | `play:write` | Validates or deletes staged changes |
-| Commit edit | `play:publish` | Validates, then submits changes to Google Play |
+| `play:read` | `list_reviews`, `get_tracks`, `get_listings` | Read reviews or inspect an existing edit owned by this connection |
+| `play:write` | `reply_review` | Immediately posts a public review reply |
+| `play:write` | `create_edit`, `update_listing`, `update_track`, `validate_edit`, `discard_edit` | Creates, modifies, validates, or discards unpublished edits |
+| `play:write` | `bundle_upload_instructions` and binary REST upload | Uploads an AAB into an owned edit; maximum 90 MiB |
+| `play:manage` | `DELETE /mcp/api/connection` | Attempts Google revocation and removes the account's local connection |
+| `offline_access` | Agent session refresh | Requests continued access according to the OAuth grant lifetime |
 
-MCP exposes `bundle_upload_instructions`, which gives an authenticated REST upload endpoint. Binary bytes are not sent through MCP JSON. An agent needs an HTTP/file capability to upload its build. Screenshot uploads, financial reports, subscriptions, app creation, and Play Console declarations are outside this starter.
+Reading staged listings or tracks requires an edit previously created with `play:write`. Track updates replace the staged release list: inspect the existing track first. Text listings are supported; screenshots, graphics, app creation, financial reports, and subscription management are not included.
 
-Compatibility means clients supporting the SDK's Streamable HTTP MCP protocol versions, or agents capable of calling REST with bearer authentication. This does not guarantee that every agent product supports remote MCP, this authorization flow, or binary uploads. No client-specific integration has been tested yet.
+`commit_edit` is **not exposed by the hosted service**. Setting `ENABLE_PUBLISH=true` does not enable it in this beta; the Worker intentionally excludes publishing. Per-agent consent is not per-action human approval. Review replies already have an immediate external effect.
 
-## Authorization architecture
+The connector uses Google's broad `https://www.googleapis.com/auth/androidpublisher` permission, alongside `openid email` for sign-in. Connector scopes provide the finer read/write/manage controls; Google does not receive a read-only scope just because an agent requests `play:read`.
 
-1. Your authorization server authenticates developers and issues connector JWT access tokens. They must have the configured issuer, audience, subject, expiry, issued-at time, and a space-separated `scope` claim. Only RS256 and ES256 are accepted.
-2. The connector advertises OAuth protected resource metadata at `/.well-known/oauth-protected-resource/mcp`. The configured authorization server must supply MCP-compatible OAuth discovery, authorization code flow with PKCE, client onboarding/registration, refresh, consent, and resource/audience binding. These functions are deliberately delegated; this repository does not implement an authorization server.
-3. Your signed-in web frontend sends `POST /connect` using a connector token with `play:connect`. The response sets a browser-bound, HttpOnly state cookie and returns `authorizationUrl`. Navigate that same browser to the returned URL.
-4. Google returns to `/google/callback`. The connector checks the state cookie, consumes single-use state, exchanges the Google authorization code with PKCE, and encrypts the resulting tokens for that tenant.
-5. Agents call `/mcp` or `/api/tools/:name` with connector access tokens. Google tokens stay on the server and are never returned to agents.
+## Architecture
 
-Tenant keys derive from the verified issuer and subject. Token encryption uses AES-256-GCM with the tenant key as authenticated data. Edits are checked against tenant and package before use. The Google user must independently hold the relevant permissions in Play Console.
+- **Worker:** `src/cloudflare/worker.ts`; configuration in `wrangler.jsonc`.
+- **OAuth:** Cloudflare's official Workers OAuth Provider handles discovery, registration, PKCE, agent tokens, and refresh. Google authenticates the developer. Agent credentials and Google tokens are separate.
+- **D1:** Encrypted Google tokens, tenant-owned edits, and audit records. Identity comes from Google's verified `sub` claim. Google ID tokens are checked for issuer, audience, signature, expiry, and nonce.
+- **KV:** A dedicated namespace holds OAuth state and grants. The provider library handles grant and credential protection.
+- **Uploads:** Streamed directly to Google using fixed-length streams. No R2 bucket is required for the current 90 MiB upload flow.
+- **Limits:** Cloudflare rate limits apply by IP and authenticated account. They are not a global billing cap or an exact distributed quota.
+- **Retention:** A daily scheduled job deletes audit records older than 30 days. D1 backups and provider retention need separate operator policies.
 
-The Google scope is `https://www.googleapis.com/auth/androidpublisher`; the connector's read/write/publish scopes provide its own finer permission controls. Do not mistake connector read scopes for a read-only Google grant.
+Disconnect removes Google tokens and owned edit records. Old grants are rejected through a connection-revision check after a normal disconnect and reconnect. An already-running Google request cannot be recalled. OAuth grant records may remain until expiry or separate revocation; disconnect does not promise to erase Cloudflare logs or backups.
 
-Publishing is disabled by default. Setting `ENABLE_PUBLISH=true` is insufficient by itself: the calling token must also have `play:publish`. This is an authorization gate, **not a human approval interface**. Keep that scope out of general agent grants. A separate human approval workflow is a launch item if your product promises per-action approval. Review replies already have an immediate external effect.
+## REST API
 
-## Run locally
+The hosted REST API accepts the same connector bearer token as MCP, bound to the canonical `/mcp` resource. Never send a Google access token as the connector token.
 
-```powershell
-npm ci
-Copy-Item .env.example .env
-# Fill in your own configuration; do not commit .env.
-npm test
-npm start
-```
+| Method and path | Request |
+| --- | --- |
+| `POST /mcp/api/tools/TOOL_NAME` | JSON matching the tool schema in `src/tools.js` |
+| `POST /mcp/api/bundles/PACKAGE_NAME/EDIT_ID` | AAB bytes; `Content-Type: application/octet-stream`; accurate `Content-Length`; at most 90 MiB |
+| `DELETE /mcp/api/connection` | No body; requires `play:manage` |
 
-Generate `TOKEN_ENCRYPTION_KEY` using the command in `.env.example`. Use a secrets manager for deployed credentials. Keep the key separate from the database and backups.
-
-In Google Cloud, enable the Google Play Developer API and create a web OAuth client. Configure its exact redirect URI as `PUBLIC_URL/google/callback`. Configure consent branding, domains, scopes, and test users; complete whatever verification Google requires for your selected audience and scopes before public rollout. Developers connect a Google identity that has access to their apps in Play Console. They provide package names; this starter does not discover every app in their account.
-
-Use an external OAuth authorization server configured to issue tokens for `AUTH_AUDIENCE`. For remote MCP, that audience should identify `PUBLIC_URL/mcp`. Set its issuer and JWKS URI in `.env`. Never use Google's access token as the connector bearer token.
-
-The server binds to loopback. For public hosting, put an HTTPS gateway on the same host in front of it. Keep one application process and persistent SQLite storage for this starter; migrations to a shared database and distributed rate limiting are needed before horizontal scaling. The current rate limiter keys on the direct peer address, so a proxy may share a single quota across users. Configure trusted proxies and per-tenant limits before a public launch; do not blindly trust forwarded headers.
-
-## REST example
-
-Call `POST /api/tools/create_edit` with `Authorization: Bearer <connector-token>`, `Content-Type: application/json`, and:
+For a read-only first test, call `list_reviews` with:
 
 ```json
-{"packageName":"com.example.app"}
+{"packageName":"com.example.app","maxResults":20}
 ```
 
-Then upload AAB bytes to `POST /api/bundles/com.example.app/EDIT_ID` with the same connector authorization and `Content-Type: application/octet-stream`. Use returned version codes with `update_track`, validate with `validate_edit`, then use a separately authorized `commit_edit` call. Store-listing changes use the same edit flow. Track updates replace the track's release list, so read the current track first.
+For release preparation, create an edit, upload the signed AAB, inspect the track, stage the complete release list, and validate the edit. The hosted beta cannot commit it. Do not retry review replies or other writes blindly after a timeout: their outcome can be ambiguous.
 
-Generic tool calls use `POST /api/tools/TOOL_NAME`; request bodies follow the Zod schemas in `src/tools.js`. MCP clients discover the same schemas through `tools/list` at `/mcp`.
+## Develop and verify
 
-`DELETE /connection` requires `play:connect`. It attempts Google revocation, then removes local credentials, pending states, and owned edit records. It reports whether Google revocation succeeded. In-flight operations cannot be recalled. Uncommitted Google edits may remain until they expire.
+Use Node.js 24 or later:
 
-## Before public launch
+```sh
+npm ci
+npm run check
+```
 
-- Implement the signed-in onboarding page and client connection instructions against your chosen identity provider. Test discovery, consent, access-token audiences, token refresh, client registration, and expired grants with actual agent clients.
-- Implement per-action human approvals if required, bound to immutable payloads and edit revisions. Do not use an agent-controlled boolean as proof of approval.
-- Add organization membership, package allowlists, reconnection identity confirmation, and an account settings page. Currently isolation is per authenticated user, not per organization.
-- Replace the buffered 150 MiB upload endpoint with resumable, quota-controlled streaming for larger builds; test disconnects and Google processing timeouts. Do not retry commits or replies automatically after ambiguous network failures; inspect Play Console first.
-- Add per-tenant quotas, distributed controls if scaling, encrypted backups, retention/deletion jobs, key rotation, and operational alerts. SQLite and Google token refresh concurrency require review before multiple workers.
-- Add durable idempotency/reconciliation for external writes. The current audit records operation outcomes without storing review contents or tokens; it is not a tamper-proof audit service.
-- Finish privacy policy, terms, Google OAuth verification requirements, and a security review. Review the single broad Google scope and consent messaging.
-- Test listing changes, bundle signing/version codes, tracks, staged rollouts, edits that expire, rejected permissions, revocation, and managed publishing against real test apps. Google review and managed-publishing settings affect when committed changes become live.
+`check` runs the standalone tests, generates Cloudflare runtime types, type-checks the Worker, builds its bundle, and runs the Workers integration tests. Run `npm test` for the standalone suite only. Worker tests require the generated bundle and deliberately do not silently skip when it is missing.
 
-## Reference documentation
+The automated suites currently contain ten tests. They cover tenant-bound token encryption, single-use OAuth state, edit ownership, publishing gates, rollout validation, HTTP/MCP permissions, and a full simulated Google-backed OAuth flow in workerd. The simulated flow includes agent registration, consent, ID-token verification, token exchange, tool discovery, review reads, encrypted D1 storage, and account disconnect. It does not contact a real Play account.
+
+For local Workers development, use ignored local secret configuration and run `npm run cf:dev`. A development OAuth client, local `PUBLIC_URL`, and the exact local Google callback URI must be configured together. Production callback settings are not automatically valid for localhost.
+
+## Deploy to your own Cloudflare account
+
+The checked-in account, database, namespace IDs, and hostname belong to this deployment. Replace them before deploying a fork.
+
+1. Create your Worker, a D1 database, and a dedicated OAuth KV namespace. Update their identifiers and `PUBLIC_URL` in `wrangler.jsonc`.
+2. Enable Google Play Android Developer API and create a Google OAuth **Web application** client.
+3. Configure the Google redirect URI to exactly `PUBLIC_URL/google/callback`. For the deployment above it is:
+
+   ```text
+   https://play-console-mcp.taimweromita505.workers.dev/google/callback
+   ```
+
+4. Add the Worker secrets `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `TOKEN_ENCRYPTION_KEY`. Generate the encryption key from 32 cryptographically random bytes encoded as base64. Use dashboard secret entry or interactive `wrangler secret put NAME`; do not pass secret values in command arguments.
+5. Apply the schema and deploy:
+
+   ```sh
+   npx wrangler d1 migrations apply play-console-mcp-db --remote
+   npm run check
+   npm run cf:deploy
+   ```
+
+6. Verify the homepage and `/health`. Unauthenticated `/mcp` requests should return `401` with a protected-resource metadata challenge. Test a real Google account and actual agent client before inviting others.
+
+Keep the encryption key stable. Changing it without migrating existing records makes stored Google tokens unreadable. Google credentials are stored in Cloudflare secrets, not the repository. A deployment and a GitHub push are separate operations; pushing code does not automatically deploy it.
+
+## Remaining launch work
+
+See [release readiness](docs/release-readiness.md) for the specific validation and operational gaps. A real sign-in test, Google Play read and write tests, token-refresh and revocation tests, actual client compatibility, applicable Google verification, and an operator security review are still outstanding. Automated CI is not configured yet. No general public launch is claimed.
+
+The older Express/SQLite implementation uses different endpoints, authentication requirements, and a 150 MiB buffered upload limit. Its instructions are isolated in [the standalone Node guide](docs/standalone-node.md); they do not describe the hosted Cloudflare service.
+
+## References
 
 - [Google Play API setup](https://developers.google.com/android-publisher/getting_started)
-- [Google OAuth web server flow](https://developers.google.com/identity/protocols/oauth2/web-server)
-- [Google Play API methods](https://developers.google.com/android-publisher/api-ref/rest)
-- [Commit an edit](https://developers.google.com/android-publisher/api-ref/rest/v3/edits/commit)
+- [Google OAuth web-server flow](https://developers.google.com/identity/protocols/oauth2/web-server)
+- [Cloudflare MCP authorization](https://developers.cloudflare.com/agents/model-context-protocol/protocol/authorization/)
+- [Cloudflare MCP security](https://developers.cloudflare.com/agents/model-context-protocol/guides/securing-mcp-server/)
 - [MCP authorization](https://modelcontextprotocol.io/docs/tutorials/security/authorization)
-- [MCP SDK server documentation](https://ts.sdk.modelcontextprotocol.io/server)
